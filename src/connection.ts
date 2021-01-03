@@ -43,6 +43,7 @@ import { ColumnMetadata } from './token/colmetadata-token-parser';
 
 import depd from 'depd';
 import { MemoryCache } from 'adal-node';
+import BufferList from 'bl';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const deprecate = depd('tedious');
@@ -985,10 +986,6 @@ class Connection extends EventEmitter {
    * @private
    */
   socket: undefined | Socket;
-  /**
-   * @private
-   */
-  messageBuffer: Buffer;
 
   /**
    * @private
@@ -1700,7 +1697,6 @@ class Connection extends EventEmitter {
     this.isSqlBatch = false;
     this.closed = false;
     this.loggedIn = false;
-    this.messageBuffer = Buffer.alloc(0);
 
     this.curTransientRetryCount = 0;
     this.transientErrorLookup = new TransientErrorLookup();
@@ -2522,20 +2518,6 @@ class Connection extends EventEmitter {
   /**
    * @private
    */
-  emptyMessageBuffer() {
-    this.messageBuffer = Buffer.alloc(0);
-  }
-
-  /**
-   * @private
-   */
-  addToMessageBuffer(data: Buffer) {
-    this.messageBuffer = Buffer.concat([this.messageBuffer, data]);
-  }
-
-  /**
-   * @private
-   */
   sendLogin7Packet() {
     const payload = new Login7Payload({
       tdsVersion: versions[this.config.options.tdsVersion],
@@ -3307,9 +3289,6 @@ Connection.prototype.STATE = {
   },
   SENT_PRELOGIN: {
     name: 'SentPrelogin',
-    enter: function() {
-      this.emptyMessageBuffer();
-    },
     events: {
       socketError: function() {
         this.transitionTo(this.STATE.FINAL);
@@ -3318,14 +3297,16 @@ Connection.prototype.STATE = {
         this.transitionTo(this.STATE.FINAL);
       },
       message: function(message) {
+        const messageBuffer = new BufferList();
+
         const onMessageData = (data: Buffer) => {
-          this.addToMessageBuffer(data);
+          messageBuffer.append(data);
         };
 
         const onMessageEnd = () => {
           cleanup();
 
-          const preloginPayload = new PreloginPayload(this.messageBuffer);
+          const preloginPayload = new PreloginPayload(messageBuffer.slice());
           this.debug.payload(function() {
             return preloginPayload.toString('  ');
           });
