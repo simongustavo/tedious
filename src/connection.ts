@@ -2601,15 +2601,6 @@ class Connection extends EventEmitter {
   }
 
   /**
-   * Returns false to apply backpressure.
-   *
-   * @private
-   */
-  sendDataToTokenStreamParser(data: Buffer) {
-    return this.tokenStreamParser.addBuffer(data);
-  }
-
-  /**
    * This is an internal method that is called from [[Request.pause]].
    * It has to check whether the passed Request object represents the currently
    * active request, because the application might have called [[Request.pause]]
@@ -2620,6 +2611,7 @@ class Connection extends EventEmitter {
   pauseRequest(request: Request | BulkLoad) {
     if (this.isRequestActive(request)) {
       this.tokenStreamParser.pause();
+      this.messageIo.pause();
     }
   }
 
@@ -2630,6 +2622,7 @@ class Connection extends EventEmitter {
    */
   resumeRequest(request: Request | BulkLoad) {
     if (this.isRequestActive(request)) {
+      this.messageIo.resume();
       this.tokenStreamParser.resume();
     }
   }
@@ -3462,9 +3455,7 @@ Connection.prototype.STATE = {
         }
       },
       message: function(message) {
-        const onMessageData = (data: Buffer) => {
-          this.sendDataToTokenStreamParser(data);
-        };
+        message.pipe(this.tokenStreamParser.parser, { end: false });
 
         const onMessageEnd = () => {
           cleanup();
@@ -3486,11 +3477,9 @@ Connection.prototype.STATE = {
         };
 
         const cleanup = () => {
-          message.removeListener('data', onMessageData);
           message.removeListener('end', onMessageEnd);
         };
 
-        message.on('data', onMessageData);
         message.once('end', onMessageEnd);
 
         this.once('stateWillChange', cleanup);
@@ -3507,9 +3496,7 @@ Connection.prototype.STATE = {
         this.transitionTo(this.STATE.FINAL);
       },
       message: function(message) {
-        const onMessageData = (data: Buffer) => {
-          this.sendDataToTokenStreamParser(data);
-        };
+        message.pipe(this.tokenStreamParser.parser, { end: false });
 
         const onMessageEnd = () => {
           cleanup();
@@ -3547,11 +3534,9 @@ Connection.prototype.STATE = {
         };
 
         const cleanup = () => {
-          message.removeListener('data', onMessageData);
           message.removeListener('end', onMessageEnd);
         };
 
-        message.on('data', onMessageData);
         message.once('end', onMessageEnd);
 
         this.once('stateWillChange', cleanup);
@@ -3574,9 +3559,7 @@ Connection.prototype.STATE = {
         this.fedAuthInfoToken = token;
       },
       message: function(message) {
-        const onMessageData = (data: Buffer) => {
-          this.sendDataToTokenStreamParser(data);
-        };
+        message.pipe(this.tokenStreamParser.parser, { end: false });
 
         const onMessageEnd = () => {
           cleanup();
@@ -3661,11 +3644,9 @@ Connection.prototype.STATE = {
         };
 
         const cleanup = () => {
-          message.removeListener('data', onMessageData);
           message.removeListener('end', onMessageEnd);
         };
 
-        message.on('data', onMessageData);
         message.once('end', onMessageEnd);
 
         this.once('stateWillChange', cleanup);
@@ -3685,9 +3666,7 @@ Connection.prototype.STATE = {
         this.transitionTo(this.STATE.FINAL);
       },
       message: function(message) {
-        const onMessageData = (data: Buffer) => {
-          this.sendDataToTokenStreamParser(data);
-        };
+        message.pipe(this.tokenStreamParser.parser, { end: false });
 
         const onMessageEnd = () => {
           cleanup();
@@ -3697,11 +3676,9 @@ Connection.prototype.STATE = {
         };
 
         const cleanup = () => {
-          message.removeListener('data', onMessageData);
           message.removeListener('end', onMessageEnd);
         };
 
-        message.on('data', onMessageData);
         message.once('end', onMessageEnd);
 
         this.once('stateWillChange', cleanup);
@@ -3721,6 +3698,7 @@ Connection.prototype.STATE = {
     exit: function(nextState) {
       this.clearRequestTimer();
       if (nextState !== this.STATE.FINAL) {
+        this.messageIo.resume();
         this.tokenStreamParser.resume();
       }
     },
@@ -3733,43 +3711,29 @@ Connection.prototype.STATE = {
         sqlRequest.callback(err);
       },
       message: function(message) {
-        const onMessageData = (data: Buffer) => {
-          this.clearRequestTimer(); // request timer is stopped on first data package
-          const ret = this.sendDataToTokenStreamParser(data);
-          if (ret === false) {
-            // Bridge backpressure from the token stream parser transform to the
-            // packet stream transform.
-            this.messageIo.pause();
-          }
-        };
+        this.clearRequestTimer(); // request timer is stopped on first data package
+
+        message.pipe(this.tokenStreamParser.parser, { end: false });
 
         const onMessageEnd = () => {
           cleanup();
 
-          // We have to channel the 'message' (EOM) event through the token stream
-          // parser transform, to keep it in line with the flow of the tokens, when
-          // the incoming data flow is paused and resumed.
-          this.tokenStreamParser.addEndOfMessageMarker();
+          this.transitionTo(this.STATE.LOGGED_IN);
+          const sqlRequest = this.request as Request;
+          this.request = undefined;
+          if (this.config.options.tdsVersion < '7_2' && sqlRequest.error && this.isSqlBatch) {
+            this.inTransaction = false;
+          }
+          sqlRequest.callback(sqlRequest.error, sqlRequest.rowCount, sqlRequest.rows);
         };
 
         const cleanup = () => {
-          message.removeListener('data', onMessageData);
           message.removeListener('end', onMessageEnd);
         };
 
-        message.on('data', onMessageData);
         message.once('end', onMessageEnd);
 
         this.once('stateWillChange', cleanup);
-      },
-      endOfMessageMarkerReceived: function() {
-        this.transitionTo(this.STATE.LOGGED_IN);
-        const sqlRequest = this.request as Request;
-        this.request = undefined;
-        if (this.config.options.tdsVersion < '7_2' && sqlRequest.error && this.isSqlBatch) {
-          this.inTransaction = false;
-        }
-        sqlRequest.callback(sqlRequest.error, sqlRequest.rowCount, sqlRequest.rows);
       }
     }
   },
@@ -3791,9 +3755,7 @@ Connection.prototype.STATE = {
         this.attentionReceived = true;
       },
       message: function(message) {
-        const onMessageData = (data: Buffer) => {
-          this.sendDataToTokenStreamParser(data);
-        };
+        message.pipe(this.tokenStreamParser.parser, { end: false });
 
         const onMessageEnd = () => {
           cleanup();
@@ -3816,12 +3778,10 @@ Connection.prototype.STATE = {
         };
 
         const cleanup = () => {
-          message.removeListener('data', onMessageData);
           message.removeListener('end', onMessageEnd);
         };
 
         this.once('stateWillChange', cleanup);
-        message.on('data', onMessageData);
         message.once('end', onMessageEnd);
       }
     }
