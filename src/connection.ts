@@ -2225,31 +2225,32 @@ class Connection extends EventEmitter {
       localAddress: this.config.options.localAddress
     };
 
-    new Connector(connectOpts, signal, multiSubnetFailover).execute((err, socket) => {
-      if (err) {
+    new Connector(connectOpts, signal, multiSubnetFailover).execute().then((socket) => {
+      process.nextTick(() => {
+        socket.on('error', (error) => { this.socketError(error); });
+        socket.on('close', () => { this.socketClose(); });
+        socket.on('end', () => { this.socketEnd(); });
+        socket.setKeepAlive(true, KEEP_ALIVE_INITIAL_DELAY);
+
+        this.messageIo = new MessageIO(socket, this.config.options.packetSize, this.debug);
+        this.messageIo.on('data', (data) => { this.dispatchEvent('data', data); });
+        this.messageIo.on('message', () => { this.dispatchEvent('message'); });
+        this.messageIo.on('secure', (cleartext) => { this.emit('secure', cleartext); });
+        this.messageIo.on('error', (error) => {
+          this.socketError(error);
+        });
+
+        this.socket = socket;
+        this.socketConnect();
+      });
+    }, (err) => {
+      process.nextTick(() => {
         if (err.name === 'AbortError') {
           return;
         }
 
         return this.socketError(err);
-      }
-
-      socket = socket!;
-      socket.on('error', (error) => { this.socketError(error); });
-      socket.on('close', () => { this.socketClose(); });
-      socket.on('end', () => { this.socketEnd(); });
-      socket.setKeepAlive(true, KEEP_ALIVE_INITIAL_DELAY);
-
-      this.messageIo = new MessageIO(socket, this.config.options.packetSize, this.debug);
-      this.messageIo.on('data', (data) => { this.dispatchEvent('data', data); });
-      this.messageIo.on('message', () => { this.dispatchEvent('message'); });
-      this.messageIo.on('secure', (cleartext) => { this.emit('secure', cleartext); });
-      this.messageIo.on('error', (error) => {
-        this.socketError(error);
       });
-
-      this.socket = socket;
-      this.socketConnect();
     });
   }
 
