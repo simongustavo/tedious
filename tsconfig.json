@@ -8,7 +8,8 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "lib": [ "esnext" ]
+    "lib": [ "esnext" ],
+    "skipLibCheck": true,
   },
 
   "include": [
@@ -18,9 +19,7 @@
 
   "typedocOptions": {
     "name": "Tedious",
-    "mode": "library",
     "out": "./docs",
-    "exclude": "**/node_modules/**",
-    "inputFiles": ["./src/tedious.ts"]
+    "entryPoints": ["./src/tedious.ts"]
   }
 }
